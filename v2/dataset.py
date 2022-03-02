@@ -11,6 +11,7 @@ from torch.utils.data import Dataset
 
 def paired_collate_fn(insts):
     src_seq, tgt_seq = list(zip(*insts))
+    #声音的位置信息
     src_pos = np.array([
         [pos_i + 1 for pos_i, v_i in enumerate(inst)] for inst in src_seq])
 

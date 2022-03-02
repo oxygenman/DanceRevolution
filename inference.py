@@ -21,20 +21,21 @@ import essentia.streaming
 from essentia.standard import *
 from extractor import FeatureExtractor
 from PIL import Image
+from base_pose_3d.convert_2d_to_3d import convert_2d_to_3d_batch
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--test_dir', type=str, default='music/test')
+parser.add_argument('--test_dir', type=str, default='music/')
 parser.add_argument('--output_dir', type=str, default='generation_dances')
 parser.add_argument('--cuda', type=str2bool, nargs='?', metavar='BOOL',
                     const=True, default=torch.cuda.is_available(),
                     help='whether to use GPU acceleration.')
-parser.add_argument('--dance_num', type=int, default=10,
+parser.add_argument('--dance_num', type=int, default=2,
                     help='the number of generated dances for one audio')
 parser.add_argument('--seed', type=int, default=123,
                     help='random seed for data shuffling, dropout, etc.')
 parser.add_argument('--model', type=str, metavar='PATH',
-                    default='checkpoints/epoch_best.pt')
+                    default='checkpoints/pretrained.pt')
 parser.add_argument('--batch_size', type=int, metavar='N', default=1)
 parser.add_argument('--worker_num', type=int, default=16)
 parser.add_argument('--width', type=int, default=1280,
@@ -101,7 +102,7 @@ def interpolate(frames, stride=10):
     new_frames=[]
     for i in range(len(frames)-1):
 
-        inter_points=np.zeros((25,3))
+        inter_points=np.zeros((32,3))
         left_points = frames[i]
         right_points = frames[i+1]
         for j in range(len(inter_points)):
@@ -120,11 +121,11 @@ def store(frames, out_dance_path):
 
 
         people_dicts = []
-        people_dict = {'pose_keypoints_2d': np.array(pose_points).reshape(-1).tolist(),
+        people_dict = {'pose_keypoints_2d': [],
                        'face_keypoints_2d': np.zeros((70, 3)).tolist(),
                        'hand_left_keypoints_2d': np.zeros((21, 3)).tolist(),
                        'hand_right_keypoints_2d': np.zeros((21, 3)).tolist(),
-                       'pose_keypoints_3d': [],
+                       'pose_keypoints_3d': np.array(pose_points).reshape(-1).tolist(),
                        'face_keypoints_3d': [],
                        'hand_left_keypoints_3d': [],
                        'hand_right_keypoints_3d': []}
@@ -145,7 +146,7 @@ def convert_to_30fps(dance_path, out_dance_path):
             keypoint_dicts = json.loads(f.read())['people']
 
             keypoint_dict = keypoint_dicts[0]
-            pose_points = np.array(keypoint_dict['pose_keypoints_2d']).reshape(25, 3).tolist()
+            pose_points = np.array(keypoint_dict['pose_keypoints_3d']).reshape(32, 4).tolist()
 
             frames.append(pose_points)
 
@@ -156,6 +157,7 @@ def convert_to_30fps(dance_path, out_dance_path):
 
 
 def write2json(dances,audio_fnames):
+    print(len(dances))
     assert len(audio_fnames)*args.dance_num == len(dances), "Dance datas mismatch the file names"
 
     for i in range(len(dances)):
@@ -218,6 +220,64 @@ def write2json(dances,audio_fnames):
                 os.makedirs(out_dance_path)
             convert_to_30fps(dance_path,out_dance_path)
 
+def write2json_3d(dances,audio_fnames):
+    print(len(dances))
+    assert len(audio_fnames)*args.dance_num == len(dances), "Dance datas mismatch the file names"
+    keypoints_3d_num=32
+
+    for i in range(len(dances)):
+        num_poses = dances[i].shape[0]
+        dances[i] = dances[i].reshape(num_poses, keypoints_3d_num, 3)
+        dance_path = os.path.join(args.output_dir, audio_fnames[i//args.dance_num].split(".m4a")[0],
+            f'{i%args.dance_num:02d}',"json")
+
+        if not os.path.exists(dance_path):
+            os.makedirs(dance_path)
+
+        for j in range(num_poses):
+            frame_dict = {'version': 1.2}
+            # 2-D key points
+            # Random values for the below key points
+            pose_keypoints_2d=[]
+            face_keypoints_2d = np.zeros((70, 3)).tolist()
+            hand_left_keypoints_2d = np.zeros((21, 3)).tolist()
+            hand_right_keypoints_2d = np.zeros((21, 3)).tolist()
+            # 3-D key points
+            pose_keypoints_3d = []
+            face_keypoints_3d = []
+            hand_left_keypoints_3d = []
+            hand_right_keypoints_3d = []
+            keypoints = dances[i][j]
+            for k, keypoint in enumerate(keypoints):
+                x = keypoint[0] 
+                y = keypoint[1]
+                z = keypoint[2]
+                score = 0.8
+                if k < keypoints_3d_num:
+                    pose_keypoints_3d.extend([x, y, z,score])
+            people_dicts=[]
+            people_dict = {'pose_keypoints_2d': pose_keypoints_2d,
+                           'face_keypoints_2d': face_keypoints_2d,
+                           'hand_left_keypoints_2d': hand_left_keypoints_2d,
+                           'hand_right_keypoints_2d': hand_right_keypoints_2d,
+                           'pose_keypoints_3d': pose_keypoints_3d,
+                           'face_keypoints_3d': face_keypoints_3d,
+                           'hand_left_keypoints_3d': hand_left_keypoints_3d,
+                           'hand_right_keypoints_3d': hand_right_keypoints_3d}
+            people_dicts.append(people_dict)
+            frame_dict['people'] = people_dicts
+            frame_json = json.dumps(frame_dict)
+            with open(os.path.join(dance_path, f'frame{j:06d}_keypoints.json'), 'w') as f:
+                f.write(frame_json)
+        print(f'finished writing to json {i%args.dance_num:02d}')
+
+        if args.fps == '15':
+            out_dance_path = os.path.join(args.output_dir, audio_fnames[i//args.dance_num].split(".m4a")[0],
+            f'{i%args.dance_num:02d}',"json_30fps")
+            if not os.path.exists(out_dance_path):
+                os.makedirs(out_dance_path)
+            convert_to_30fps(dance_path,out_dance_path)
+
 
 def extract_acoustic_feature(input_audio_dir, fps='30',sr=15360):
     #assert (fps == '15') or (fps == '30') or (fps == '20'), "illegal fps"
@@ -239,8 +299,11 @@ def extract_acoustic_feature(input_audio_dir, fps='30',sr=15360):
         audio = loader()
         audio = np.array(audio).T
 
+        #梅尔声谱图
         melspe_db = extractor.get_melspectrogram(audio, sr)
+        #梅尔到普系数
         mfcc = extractor.get_mfcc(melspe_db)
+        #梅尔到普系数差分
         mfcc_delta = extractor.get_mfcc_delta(mfcc)
         # mfcc_delta2 = extractor.get_mfcc_delta2(mfcc)
 
@@ -248,11 +311,14 @@ def extract_acoustic_feature(input_audio_dir, fps='30',sr=15360):
         audio_harmonic, audio_percussive = extractor.get_hpss(audio)
         # harmonic_melspe_db = extractor.get_harmonic_melspe_db(audio_harmonic, sr)
         # percussive_melspe_db = extractor.get_percussive_melspe_db(audio_percussive, sr)
+        #恒q变换
         chroma_cqt = extractor.get_chroma_cqt(audio_harmonic, sr)
         # chroma_stft = extractor.get_chroma_stft(audio_harmonic, sr)
 
         onset_env = extractor.get_onset_strength(audio_percussive, sr)
+        #节奏特征
         tempogram = extractor.get_tempogram(onset_env, sr)
+        #节拍
         onset_beat = extractor.get_onset_beat(onset_env, sr)
         # onset_tempo, onset_beat = librosa.beat.beat_track(onset_envelope=onset_env, sr=sr)
         # onset_beats.append(onset_beat)
@@ -298,29 +364,31 @@ def main():
     )
 
     device = torch.device('cuda' if args.cuda else 'cpu')
+    #device=torch.device("cpu")
 
     generator = Generator(args, device)
 
     results = []
     for batch in tqdm(test_loader, desc='Generating dance poses'):
+        #src_pos 位置信息                                
         src_seq, src_pos = map(lambda x: x.to(device), batch)
         generate_num = args.dance_num//2 if args.fps=='15' else args.dance_num
         for _ in range(generate_num):
             poses = generator.generate(src_seq, src_pos)
             results.append(poses)
-
+    print("len results:",len(results))
     np_dances = []
     for i in range(len(results)):
         np_dance = results[i][0].data.cpu().numpy()
         root = np_dance[:,2*8:2*9]
         np_dance = np_dance + np.tile(root,(1,25))
         np_dance[:,2*8:2*9] = root
-
+        np_dance=convert_2d_to_3d_batch(np_dance,args.width,args.height)
         np_dances.append(np_dance)
 
-    write2json(np_dances,audio_fnames)
+    write2json_3d(np_dances,audio_fnames)
 
-    visualize(args.output_dir, worker_num=args.worker_num)
+    #visualize(args.output_dir, worker_num=args.worker_num)
 
 if __name__ == '__main__':
     main()

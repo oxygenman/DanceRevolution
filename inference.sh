@@ -1,12 +1,12 @@
 #! /bin/bash
 
 # The output dir to store the generated results
-outputs="outputs/demo_song" 
+outputs="outputs/" 
 # Please specify your own music directory
-music_dir="music/demo_song" 
+music_dir="music/" 
 
 # Test (Please set dance_num argument to a even number)
-python3 predict.py --test_dir ${music_dir}  \
+python3 inference.py --test_dir ${music_dir}  \
                    --output_dir ${outputs} \
                    --model checkpoints/epoch_best.pt \
                    --dance_num 8

@@ -15,7 +15,7 @@ class Generator(object):
     def __init__(self, args, device):
         self.args = args
         self.device = device
-
+    
         checkpoint = torch.load(args.model)
         model_args = checkpoint['args']
 

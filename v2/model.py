@@ -32,8 +32,8 @@ def get_subsequent_mask(seq, sliding_windown_size):
     mask = torch.triu(mask, diagonal=-sliding_windown_size)
     mask = torch.tril(mask, diagonal=sliding_windown_size)
     mask = 1 - mask
-    # print(mask)
-    return mask.bool()
+    print(mask)
+    return mask>0
 
 
 def get_sinusoid_encoding_table(n_position, d_hid, padding_idx=None):
